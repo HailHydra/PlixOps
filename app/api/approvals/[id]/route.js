@@ -1,0 +1,73 @@
+import { NextResponse } from "next/server";
+import { FALLBACK_VIDEO_EDITOR } from "@/lib/workflow/constants";
+import { transitionTask } from "@/lib/workflow/engine";
+import { mutateState } from "@/lib/store/unified-store";
+
+export async function POST(request, context) {
+  try {
+    const { id: taskId } = await context.params;
+    const body = await request.json();
+    const { decision, type = "script", comment = "" } = body;
+
+    if (!["approved", "changes_requested"].includes(decision)) {
+      return NextResponse.json({ error: "Decision must be approved or changes_requested" }, { status: 400 });
+    }
+
+    const { result } = await mutateState(async ({ tasks }) => {
+      const index = tasks.findIndex((t) => t.id === taskId);
+      if (index === -1) throw new Error(`Task ${taskId} not found`);
+
+      const current = tasks[index];
+      let nextState;
+
+      if (type === "script") {
+        if (decision === "approved") {
+          nextState = "editing_queue";
+        } else {
+          nextState = "script_changes_requested";
+        }
+      } else {
+        // Video approval
+        if (decision === "approved") {
+          nextState = "ready_for_performance";
+        } else {
+          nextState = "changes_requested";
+        }
+      }
+
+      let updated = transitionTask(
+        current,
+        nextState,
+        "Brand Approver",
+        `Brand decision on ${type}: ${decision}. ${comment}`.trim()
+      );
+
+      // Auto-assign fallback editor if unassigned when entering video queue
+      if (nextState === "editing_queue" && !updated.editorId) {
+        updated.editorId = FALLBACK_VIDEO_EDITOR.id;
+      }
+
+      // Update approval record status
+      updated.approvals = (updated.approvals || []).map((appr) => {
+        if (appr.type === type && appr.status === "pending") {
+          return {
+            ...appr,
+            status: decision,
+            decidedBy: "Brand Approver",
+            decisionComment: comment,
+            decidedAt: new Date().toISOString(),
+          };
+        }
+        return appr;
+      });
+
+      tasks[index] = updated;
+      return updated;
+    }, "Brand Approver");
+
+    return NextResponse.json({ task: result });
+  } catch (error) {
+    return NextResponse.json({ error: error.message || "Failed to process approval" }, { status: 500 });
+  }
+}
+

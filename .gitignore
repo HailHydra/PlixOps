@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+
+# Next.js build output
+.next/
+/out/
+/build/
+
+# Local application state
+.data/
+
+# Local credentials and keys
+/credentials/
+*.pem
+
+# Environment files
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Deployment and tooling output
+.vercel/
+.turbo/
+coverage/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Operating system files
+.DS_Store
+Thumbs.db
