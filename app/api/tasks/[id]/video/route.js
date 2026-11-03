@@ -1,19 +1,41 @@
 import { NextResponse } from "next/server";
-import { SubmitVideoSchema } from "@/lib/workflow/contracts";
 import { transitionTask } from "@/lib/workflow/engine";
 import { mutateState } from "@/lib/store/unified-store";
+import { saveReviewVideo, deleteReviewVideo } from "@/lib/video/storage";
+
+export const runtime = "nodejs";
 
 export async function POST(request, context) {
+  let asset = null;
   try {
     const { id } = await context.params;
-    const body = await request.json();
-    const parsed = SubmitVideoSchema.safeParse({ ...body, taskId: id });
+    const contentType = request.headers.get("content-type") || "";
 
-    if (!parsed.success) {
-      return NextResponse.json(
-        { error: parsed.error.issues[0]?.message || "Invalid video submission" },
-        { status: 400 }
-      );
+    let videoUrl = "";
+    let comment = "";
+    let aspectRatio = "9:16";
+
+    if (contentType.includes("multipart/form-data")) {
+      const form = await request.formData();
+      const file = form.get("video");
+      comment = form.get("comment") || "";
+      aspectRatio = form.get("aspectRatio") || "9:16";
+
+      if (file && typeof file.arrayBuffer === "function" && file.size > 0) {
+        asset = await saveReviewVideo(file);
+        videoUrl = `/api/tasks/${encodeURIComponent(id)}/video/${asset.key}`;
+      } else {
+        videoUrl = form.get("videoUrl") || "";
+      }
+    } else {
+      const body = await request.json();
+      videoUrl = body.videoUrl || "";
+      comment = body.comment || "";
+      aspectRatio = body.aspectRatio || "9:16";
+    }
+
+    if (!videoUrl) {
+      return NextResponse.json({ error: "Please upload a video file or provide a video link." }, { status: 400 });
     }
 
     const { result } = await mutateState(async ({ tasks }) => {
@@ -21,24 +43,28 @@ export async function POST(request, context) {
       if (index === -1) throw new Error(`Task ${id} not found`);
 
       const current = tasks[index];
+      const version = Math.max(0, ...(current.versions || []).map((item) => Number(item.number) || 0)) + 1;
+
       let updated = transitionTask(
         current,
         "approval_pending",
         "Video Editor",
-        `Submitted version ${parsed.data.version} (${parsed.data.aspectRatio}) for Brand review.`
+        `Submitted video cut v${version} for Brand review.`
       );
 
-      updated.videoLink = parsed.data.videoUrl;
-      updated.aspectRatio = parsed.data.aspectRatio;
+      updated.videoLink = videoUrl;
+      updated.videoAsset = asset;
+      updated.aspectRatio = aspectRatio;
 
       // Add to versions
       updated.versions = updated.versions || [];
       updated.versions.unshift({
         id: `ver-${Date.now()}`,
-        number: parsed.data.version,
-        videoUrl: parsed.data.videoUrl,
-        aspectRatio: parsed.data.aspectRatio,
-        comment: parsed.data.comment,
+        number: version,
+        videoUrl,
+        videoAsset: asset,
+        aspectRatio,
+        comment,
         status: "In review",
         submittedAt: new Date().toISOString(),
       });
@@ -50,7 +76,7 @@ export async function POST(request, context) {
         type: "video",
         status: "pending",
         requestedBy: "Video Editor",
-        comment: parsed.data.comment,
+        comment,
         requestedAt: new Date().toISOString(),
       });
 
@@ -60,7 +86,7 @@ export async function POST(request, context) {
 
     return NextResponse.json({ task: result });
   } catch (error) {
+    if (asset) await deleteReviewVideo(asset).catch(() => {});
     return NextResponse.json({ error: error.message || "Failed to submit video" }, { status: 500 });
   }
 }
-

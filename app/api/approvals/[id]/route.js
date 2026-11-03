@@ -27,9 +27,9 @@ export async function POST(request, context) {
           nextState = "script_changes_requested";
         }
       } else {
-        // Video approval
+        // Video approval - approves video and shares back to Video Team (not to Perf team)
         if (decision === "approved") {
-          nextState = "ready_for_performance";
+          nextState = "approved";
         } else {
           nextState = "changes_requested";
         }

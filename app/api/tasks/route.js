@@ -26,6 +26,9 @@ export async function GET(request) {
 export async function POST(request) {
   try {
     const body = await request.json();
+    if (!body.title && body.hookName) {
+      body.title = body.hookName;
+    }
     const parsed = CreateBriefSchema.safeParse(body);
     if (!parsed.success) {
       return NextResponse.json(
